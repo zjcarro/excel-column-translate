@@ -41,6 +41,18 @@ def deduplicate_columns(columns):
             result.append(f"{col}.{seen[col] - 1}")
     return result
 
+def deduplicate_sheet_names(sheet_names):
+    seen = {}
+    result = []
+    for sheet_name in sheet_names:
+        if sheet_name not in seen:
+            seen[sheet_name] = 1
+            result.append(sheet_name)
+        else:
+            seen[sheet_name] += 1
+            result.append(f"{sheet_name}.{seen[sheet_name] - 1}")
+    return result
+
 def remove_empty_columns(df: pd.DataFrame) -> pd.DataFrame:
     # Remove columns with empty or "Unnamed" headers
     df = df.loc[:, ~df.columns.str.startswith('Unnamed')]
@@ -100,15 +112,33 @@ def process_excel_file(uploaded_file: Union[io.BytesIO, str], translation_map: D
     total_columns = sum(len(pd.read_excel(xls, sheet_name=sheet).columns) for sheet in xls.sheet_names)
 
     translated_sheets = {}
+    translated_sheet_names = {}  # Store translated sheet names
     overall_progress_text = st.empty()
     overall_progress_bar = st.progress(0)
     overall_tracker = ProgressTracker(total_columns)
     overall_progress_text.write(f"Overall progress: 0/{total_sheets} sheets, 0/{total_columns} columns")
 
+    # Translate sheet names
+    sheet_translation_progress = st.empty()
+    sheet_translation_progress.write("Translating sheet names...")
+    sheet_translation_progress_bar = st.progress(0)
+    for idx, sheet_name in enumerate(xls.sheet_names):
+        translated_sheet_name = translate_text(sheet_name)
+        translated_sheet_names[sheet_name] = translated_sheet_name
+        sheet_translation_progress_bar.progress((idx + 1) / total_sheets)
+    sheet_translation_progress.empty()
+    sheet_translation_progress_bar.empty()
+
+    # Deduplicate translated sheet names
+    translated_sheet_names_list = list(translated_sheet_names.values())
+    translated_sheet_names_list = deduplicate_sheet_names(translated_sheet_names_list)
+    translated_sheet_names = {sheet: translated_name for sheet, translated_name in zip(xls.sheet_names, translated_sheet_names_list)}
+
     for sheet_idx, sheet_name in enumerate(xls.sheet_names):
+        translated_sheet_name = translated_sheet_names[sheet_name]
         df = pd.read_excel(xls, sheet_name=sheet_name)
-        translated_df = translate_columns(df, translation_map, sheet_name, sheet_idx, total_sheets, overall_tracker)
-        translated_sheets[sheet_name] = translated_df
+        translated_df = translate_columns(df, translation_map, translated_sheet_name, sheet_idx, total_sheets, overall_tracker)
+        translated_sheets[translated_sheet_name] = translated_df
         overall_progress_text.write(
             f"Overall progress: {sheet_idx + 1}/{total_sheets} sheets, {overall_tracker.progress_value}/{total_columns} columns"
         )
@@ -143,7 +173,7 @@ def to_excel(translated_sheets: Dict[str, pd.DataFrame]) -> bytes:
 def main():
     st.title("📊 Column Header Translator")
     st.markdown("""
-    Upload an Excel or CSV file to translate all column headers to English.
+    Upload an Excel or CSV file to translate all column headers and sheet names to English.
     You can optionally provide your own translations for specific columns.
     """)
 
