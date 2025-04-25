@@ -171,6 +171,7 @@ def to_excel(translated_sheets: Dict[str, pd.DataFrame]) -> bytes:
     return output.getvalue()
 
 def main():
+    st.set_page_config(page_title="Column Header Translator")
     st.title("📊 Column Header Translator")
     st.markdown("""
     Upload an Excel or CSV file to translate all column headers and sheet names to English.
