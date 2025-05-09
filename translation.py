@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 from deep_translator import GoogleTranslator
 import io
-from typing import Dict, Union
+import json
+from typing import Dict, Union, Any
 
 # Initialize translator once
 translator = GoogleTranslator(source='auto', target='en')
@@ -106,6 +107,40 @@ def translate_columns(df: pd.DataFrame, translation_map: Dict[str, str], sheet_n
     overall_tracker.progress(overall_tracker.progress_value + total_columns)
     return df
 
+def csv_to_json(
+    csv_input: Union[str, io.BytesIO, pd.DataFrame],
+    orient: str = "records",
+    indent: int = 4,
+    force_ascii: bool = False
+) -> Union[Dict[str, Any], list]:
+    """
+    Convert CSV data to JSON using Pandas.
+    Args:
+        csv_input: Can be a file path (str), file-like object (BytesIO), or DataFrame.
+        orient: JSON format ('records', 'split', 'index', 'columns', 'values').
+        indent: JSON indentation (set to None for compact JSON).
+        force_ascii: Escape non-ASCII characters if True.
+    Returns:
+        JSON-compatible dict/list (or raises ValueError on failure).
+    """
+    try:
+        # Read CSV (handles both file paths and file-like objects)
+        if isinstance(csv_input, pd.DataFrame):
+            df = csv_input
+        else:
+            df = pd.read_csv(csv_input)
+        
+        # Convert to JSON-serializable object
+        if orient == "records":
+            json_data = json.loads(df.to_json(orient=orient, indent=indent, force_ascii=force_ascii))
+        else:
+            json_data = df.to_dict(orient=orient)
+        
+        return json_data
+    
+    except Exception as e:
+        raise ValueError(f"CSV-to-JSON conversion failed: {str(e)}")
+
 def process_excel_file(uploaded_file: Union[io.BytesIO, str], translation_map: Dict[str, str]) -> Dict[str, pd.DataFrame]:
     xls = pd.ExcelFile(uploaded_file)
     total_sheets = len(xls.sheet_names)
@@ -171,62 +206,86 @@ def to_excel(translated_sheets: Dict[str, pd.DataFrame]) -> bytes:
     return output.getvalue()
 
 def main():
-    st.set_page_config(page_title="Column Header Translator")
-    st.title("📊 Column Header Translator")
+    st.set_page_config(page_title="Column Translator + CSV/JSON Converter")
+    st.title("📊 Column Translator + CSV/JSON Converter")
     st.markdown("""
-    Upload an Excel or CSV file to translate all column headers and sheet names to English.
-    You can optionally provide your own translations for specific columns.
+    Upload an Excel or CSV file to:
+    1. Translate column headers/sheet names to English
+    2. Convert CSV files to JSON
     """)
 
-    # Initialize session state for caching
+    # Initialize session state
     if 'translated_sheets' not in st.session_state:
         st.session_state.translated_sheets = None
     if 'translated_csv' not in st.session_state:
         st.session_state.translated_csv = None
+    if 'json_data' not in st.session_state:
+        st.session_state.json_data = None
 
     uploaded_file = st.file_uploader("Choose a file", type=['xlsx', 'xls', 'csv'])
 
-    # st.subheader("Custom Translations (Optional)")
-    # st.markdown("Specify your own translations for specific columns if needed.")
-    custom_translations = {}
-    # col1, col2 = st.columns(2)
-    # for i in range(5):
-    #     with col1:
-    #         original = st.text_input(f"Original Column {i+1}", key=f"orig_{i}")
-    #     with col2:
-    #         translated = st.text_input(f"Translated to English {i+1}", key=f"trans_{i}")
-    #     if original and translated:
-    #         custom_translations[original] = translated
-
     if uploaded_file is not None:
-        try:
-            if uploaded_file.name.endswith(('.xlsx', '.xls')):
-                # Process Excel file only if it hasn't been processed yet
-                if st.session_state.translated_sheets is None:
+        file_type = "excel" if uploaded_file.name.endswith(('.xlsx', '.xls')) else "csv"
+        st.markdown(f"**Uploaded File Type:** {file_type.upper()}")
+
+        # Buttons for actions
+        col1, col2 = st.columns(2)
+        with col1:
+            translate_clicked = st.button("🔤 Translate Headers")
+        with col2:
+            json_clicked = st.button("🧾 Convert to JSON (CSV only)")
+
+        custom_translations = {}
+
+        if translate_clicked:
+            try:
+                if file_type == "excel":
                     st.session_state.translated_sheets = process_excel_file(uploaded_file, custom_translations)
-                sheet_to_preview = st.selectbox("Select sheet to preview", list(st.session_state.translated_sheets.keys()))
-                st.dataframe(st.session_state.translated_sheets[sheet_to_preview].head())
-                excel_data = to_excel(st.session_state.translated_sheets)
-                st.download_button(
-                    label="Download translated Excel file",
-                    data=excel_data,
-                    file_name="translated_headers.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            elif uploaded_file.name.endswith('.csv'):
-                # Process CSV file only if it hasn't been processed yet
-                if st.session_state.translated_csv is None:
+                    sheet_to_preview = st.selectbox("Select sheet to preview", list(st.session_state.translated_sheets.keys()))
+                    st.dataframe(st.session_state.translated_sheets[sheet_to_preview].head())
+
+                    excel_data = to_excel(st.session_state.translated_sheets)
+                    st.download_button(
+                        label="Download translated Excel file",
+                        data=excel_data,
+                        file_name="translated_headers.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
+                elif file_type == "csv":
                     st.session_state.translated_csv = process_csv_file(uploaded_file, custom_translations)
-                st.dataframe(st.session_state.translated_csv.head())
-                csv_data = st.session_state.translated_csv.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="Download translated CSV file",
-                    data=csv_data,
-                    file_name="translated_headers.csv",
-                    mime="text/csv"
-                )
-        except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
+                    st.dataframe(st.session_state.translated_csv.head())
+
+                    csv_data = st.session_state.translated_csv.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="Download translated CSV",
+                        data=csv_data,
+                        file_name="translated_headers.csv",
+                        mime="text/csv"
+                    )
+
+            except Exception as e:
+                st.error(f"An error occurred during translation: {str(e)}")
+
+        if json_clicked:
+            try:
+                if file_type == "csv":
+                    # Use original file for JSON conversion
+                    st.session_state.json_data = csv_to_json(uploaded_file)
+                    st.json(st.session_state.json_data)
+
+                    json_str = json.dumps(st.session_state.json_data, indent=2)
+                    st.download_button(
+                        label="Download as JSON",
+                        data=json_str,
+                        file_name="converted.json",
+                        mime="application/json"
+                    )
+                else:
+                    st.warning("JSON conversion is only supported for CSV files.")
+            except Exception as e:
+                st.error(f"An error occurred during JSON conversion: {str(e)}")
+
 
 if __name__ == "__main__":
     main()
